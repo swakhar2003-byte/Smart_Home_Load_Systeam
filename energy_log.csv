@@ -1,0 +1,3 @@
+Date,Time,Hour_No,Reading_Room,Bed_Room,Bathroom,Kitchen,Refrigerator
+2026-10-20,23:00:04,Hour 1,"{'Fan': 'on', 'Light': 'on'}","{'Fan': 'on', 'Light': 'off', 'TV': 'off'}",{'Light': 'off'},{'Light': 'off'},{'Fridge': 'on'}
+2026-10-20,23:06:48,Hour 1,"{'Fan': 'on', 'Light': 'on'}","{'Fan': 'on', 'Light': 'off', 'TV': 'off'}",{'Light': 'off'},{'Light': 'off'},{'Fridge': 'on'}
