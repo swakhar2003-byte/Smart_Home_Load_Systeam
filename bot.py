@@ -2,6 +2,8 @@ import logging
 from datetime import datetime
 import csv
 import os
+from threading import Thread
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -32,7 +34,7 @@ ROOMS_APPLIANCES = {
 
 daily_log = {}
 current_hour = 0
-temp_hourly_data = {}  # format: {"Reading Room": {"Fan": "on", "Light": "off"}, ...}
+temp_hourly_data = {}  
 current_room_idx = 0
 current_app_idx = 0
 
@@ -74,7 +76,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_text, parse_mode='Markdown')
     
-    # প্রথমবার চালু করার পর জব কিউ শুরু করা (টেস্টের জন্য ১ মিনিট পর পর, রিয়েল লাইফে 'hours=1' দিন)
     if 'job_started' not in context.chat_data:
         context.chat_data['job_started'] = True
         context.job_queue.run_repeating(trigger_hourly_job, interval=3600, first=5, chat_id=USER_CHAT_ID)
@@ -89,12 +90,11 @@ async def trigger_hourly_job(context: ContextTypes.DEFAULT_TYPE):
     current_room_idx = 0
     current_app_idx = 0
     
-    # রাত ১২টা থেকে সকাল ৮টার মধ্যে হলে স্বয়ংক্রিয় শিফট অ্যাডজাস্টমেন্ট চেক করা
+    # রাত ১২টা থেকে সকাল ৮টার মধ্যে হলে নাইট মোড অ্যাপ্লাই হবে
     current_time_hour = datetime.now().hour
     is_night_mode = 0 <= current_time_hour < 8
 
     if is_night_mode:
-        # রাত ১২ - সকাল ৮: বাথরুম ও রান্নাঘর ছাড়া বাকি সব রুমের ফ্যান অন, লাইট অফ
         for room_name, devices in ROOMS_APPLIANCES.items():
             room_status = {}
             for dev_name in devices.keys():
@@ -105,10 +105,9 @@ async def trigger_hourly_job(context: ContextTypes.DEFAULT_TYPE):
                 elif dev_name == "Light":
                     room_status[dev_name] = "off"
                 else:
-                    room_status[dev_name] = "on"  # Fridge etc.
+                    room_status[dev_name] = "on"
             temp_hourly_data[room_name] = room_status
 
-        # সরাসরি ডেটা সেভ করে পরবর্তী ঘণ্টার জন্য শিডিউল বজায় রাখা
         global daily_log
         daily_log[current_hour] = temp_hourly_data.copy()
         save_to_csv(current_hour + 1, temp_hourly_data)
@@ -123,7 +122,6 @@ async def trigger_hourly_job(context: ContextTypes.DEFAULT_TYPE):
             current_hour = 0
         return
 
-    # সাধারণ সময়ের জন্য প্রথম রুমের প্রথম অ্যাপ্লায়েন্সের প্রম্পট পাঠানো
     await send_next_prompt(chat_id, context)
 
 async def send_next_prompt(chat_id, context: ContextTypes.DEFAULT_TYPE, message_id=None):
@@ -163,13 +161,11 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     appliances = list(ROOMS_APPLIANCES[room_name].keys())
     app_name = appliances[current_app_idx]
 
-    # স্ট্যাটাস সেভ করা
     status = "on" if data == "app_on" else "off"
     if room_name not in temp_hourly_data:
         temp_hourly_data[room_name] = {}
     temp_hourly_data[room_name][app_name] = status
 
-    # পরবর্তী অ্যাপ্লায়েন্স বা রুমে যাওয়া
     current_app_idx += 1
     if current_app_idx >= len(appliances):
         current_app_idx = 0
@@ -178,7 +174,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_room_idx < len(rooms):
         await send_next_prompt(update.effective_chat.id, context, message_id=query.message.message_id)
     else:
-        # সব রুমের ইনপুট শেষ
         daily_log[current_hour] = temp_hourly_data.copy()
         save_to_csv(current_hour + 1, temp_hourly_data)
 
@@ -190,6 +185,19 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if current_hour >= 24:
             await generate_24h_report(context)
             current_hour = 0
+
+async def download_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if os.path.exists(CSV_FILE):
+        with open(CSV_FILE, 'rb') as f:
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=f,
+                filename="energy_log.csv",
+                caption="📊 **আপনার সমস্ত ইনপুটের CSV ফাইল ডাউনলোড তৈরি হয়েছে!**"
+            )
+    else:
+        await update.message.reply_text("❌ কোনো CSV ফাইল পাওয়া যায়নি! এখনও কোনো ইনপুট দেওয়া হয়নি।")
 
 async def generate_24h_report(context: ContextTypes.DEFAULT_TYPE):
     global daily_log, USER_CHAT_ID
@@ -216,15 +224,33 @@ async def generate_24h_report(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=USER_CHAT_ID, text=report, parse_mode='Markdown')
     daily_log.clear()
 
+# --- ফ্লাস্ক ডামি সার্ভার (Render ফ্রি ওয়েবের জন্য) ---
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Smart Energy Bot is running alive!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port)
+
 def main():
     init_csv()
+    
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
     custom_request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
     app = ApplicationBuilder().token(BOT_TOKEN).request(custom_request).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("download", download_csv))
+    app.add_handler(CommandHandler("csv", download_csv))
     app.add_handler(CallbackQueryHandler(button_click))
 
-    print("🤖 Smart Load Bot with Appliance-level selector is running...")
+    print("🤖 Smart Load Bot is running as a Web Service...")
     app.run_polling()
 
 if __name__ == "__main__":
