@@ -19,7 +19,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-BOT_TOKEN = "8995369907:AAFiiP78-L0pHk-O7kQIqGQBroj9wpbeNGw"
+BOT_TOKEN = "
+8827972928:AAGkYSEfrIhah5DN_AmLdqVPpZeR4CJNOOw"
 USER_CHAT_ID = None  
 CSV_FILE = "energy_log.csv"
 
